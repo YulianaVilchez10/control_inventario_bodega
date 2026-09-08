@@ -13,7 +13,131 @@ st.set_page_config(
     layout="wide"
 )
 
+# ==========================================================
+# DISEÑO VISUAL
+# ==========================================================
 
+st.markdown("""
+<style>
+
+/* FONDO GENERAL */
+.stApp {
+    background: linear-gradient(135deg, #f4f9ff 0%, #eef7f4 100%);
+}
+
+/* CONTENIDO PRINCIPAL */
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}
+
+/* BARRA LATERAL */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1f4e78 0%, #2f75b5 100%);
+}
+
+/* TEXTO DE LA BARRA LATERAL */
+section[data-testid="stSidebar"] * {
+    color: white;
+}
+
+/* SELECTBOX DEL MENÚ */
+section[data-testid="stSidebar"] div[data-baseweb="select"] > div {
+    background-color: white;
+    color: #1f2937;
+    border-radius: 10px;
+}
+
+/* TITULOS */
+h1 {
+    color: #1f4e78;
+    font-weight: 800;
+}
+
+h2, h3 {
+    color: #2f75b5;
+}
+
+/* BOTONES */
+.stButton > button {
+    background: linear-gradient(90deg, #2f75b5, #1f4e78);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 0.6rem 1rem;
+    font-weight: 600;
+    transition: 0.3s;
+}
+
+.stButton > button:hover {
+    transform: scale(1.03);
+    background: linear-gradient(90deg, #1f4e78, #163a5c);
+    color: white;
+}
+
+/* METRICAS */
+div[data-testid="stMetric"] {
+    background-color: white;
+    border: 1px solid #dbeafe;
+    padding: 18px;
+    border-radius: 15px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+/* INPUTS */
+div[data-baseweb="input"] > div {
+    border-radius: 10px;
+}
+
+/* SELECTBOX */
+div[data-baseweb="select"] > div {
+    border-radius: 10px;
+}
+
+/* TABS */
+button[data-baseweb="tab"] {
+    font-weight: 700;
+    border-radius: 8px 8px 0 0;
+}
+
+/* TAB ACTIVO */
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #1f4e78;
+    background-color: #dbeafe;
+}
+
+/* TABLAS */
+div[data-testid="stDataFrame"] {
+    background-color: white;
+    border-radius: 12px;
+    padding: 10px;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.06);
+}
+
+/* MENSAJES */
+div[data-testid="stAlert"] {
+    border-radius: 12px;
+}
+
+/* LINEAS */
+hr {
+    border: none;
+    height: 1px;
+    background-color: #dbeafe;
+}
+
+/* SCROLLBAR */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #2f75b5;
+    border-radius: 10px;
+}
+
+</style>
+""", unsafe_allow_html=True)
 # ==========================================================
 # CONEXIÓN CON SUPABASE
 # ==========================================================
