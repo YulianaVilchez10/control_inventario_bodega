@@ -513,6 +513,12 @@ def obtener_contexto_stock_ia(pregunta=""):
         df["stock_actual"] * df["precio_compra"]
     ).sum()
 
+    ranking_mayor_stock = (
+        df.sort_values("stock_actual", ascending=False)
+        [["codigo_producto", "nombre_producto", "stock_actual"]]
+        .head(15).to_dict(orient="records")
+    )
+
     lista_stock_bajo = []
 
     for _, producto in stock_bajo.head(20).iterrows():
@@ -574,6 +580,9 @@ RESUMEN ACTUAL DEL INVENTARIO
 - Productos agotados: {len(agotados)}
 - Valor del inventario a costo: S/ {valor_inventario:,.2f}
 
+ PRODUCTOS CON MAYOR STOCK (TOP 15):
+{ranking_mayor_stock}
+
 PRODUCTOS CON STOCK BAJO (máximo 20):
 {lista_stock_bajo}
 
@@ -628,6 +637,56 @@ def detectar_tipo_consulta_ia(pregunta):
 
     return "general"
 
+
+
+# ==========================================================
+# RESPUESTAS VERIFICABLES DEL CHATBOT
+# ==========================================================
+
+def respuesta_directa_inventario(pregunta):
+    """Resuelve consultas cuantitativas con Supabase, sin inventar cifras."""
+    import unicodedata
+
+    def normalizar(texto):
+        texto = unicodedata.normalize("NFD", str(texto).lower())
+        return "".join(c for c in texto if unicodedata.category(c) != "Mn")
+
+    q = normalizar(pregunta)
+    productos = obtener_productos() or []
+    df = pd.DataFrame(productos)
+    if df.empty:
+        return "Actualmente no hay productos registrados en la consulta de Supabase."
+
+    for col in ("stock_actual", "stock_minimo", "stock_maximo", "precio_compra"):
+        if col not in df.columns:
+            raise ValueError(f"Falta la columna {col} en la tabla productos")
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    n = len(df)
+    bajo = df[df["stock_actual"] <= df["stock_minimo"]]
+    agotados = df[df["stock_actual"] == 0]
+    valor = (df["stock_actual"] * df["precio_compra"]).sum()
+    pregunta_cantidad = any(x in q for x in ("cuantos productos", "cuantas referencias", "cantidad de productos", "numero de productos", "total de productos", "productos registrados"))
+    pregunta_top = ("mayor" in q or "mas" in q or "top" in q) and any(x in q for x in ("stock", "cantidad disponible", "existencias", "unidades disponibles"))
+
+    if pregunta_cantidad:
+        return (f"### 📦 Resumen actual del inventario\n\n"
+                f"- **Productos registrados:** {n:,}\n"
+                f"- **Unidades disponibles:** {df['stock_actual'].sum():,.0f}\n"
+                f"- **Productos con stock bajo:** {len(bajo)}\n"
+                f"- **Productos agotados:** {len(agotados)}\n"
+                f"- **Valor del inventario a costo:** S/ {valor:,.2f}\n\n"
+                "*Información consultada directamente en Supabase.*")
+
+    if pregunta_top:
+        top = df.sort_values("stock_actual", ascending=False).head(10)
+        filas = ["| Producto | Stock disponible |", "|---|---:|"]
+        for _, r in top.iterrows():
+            nombre = str(r.get("nombre_producto", "Sin nombre")).replace("|", "-")
+            filas.append(f"| {nombre} | {r['stock_actual']:,.0f} |")
+        return "### 📊 Los 10 productos con mayor stock\n\n" + "\n".join(filas) + "\n\n*Datos actuales de Supabase.*"
+
+    return None
 
 
 # ==========================================================
@@ -7031,6 +7090,15 @@ elif opcion == "🤖 Asistente IA":
             st.markdown(pregunta)
 
         try:
+            respuesta_verificada = respuesta_directa_inventario(pregunta)
+            if respuesta_verificada is not None:
+                st.session_state.mensajes_ia.append(
+                    {"role": "assistant", "content": respuesta_verificada}
+                )
+                with st.chat_message("assistant"):
+                    st.markdown(respuesta_verificada)
+                st.stop()
+
             # --------------------------------------------------
             # DETECTAR QUÉ INFORMACIÓN NECESITA LA PREGUNTA
             # --------------------------------------------------
