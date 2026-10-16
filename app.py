@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
+from groq import Groq
 
 
 # ==========================================================
@@ -19,125 +20,20 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-
-/* FONDO GENERAL */
-.stApp {
-    background: linear-gradient(135deg, #f4f9ff 0%, #eef7f4 100%);
-}
-
-/* CONTENIDO PRINCIPAL */
-.block-container {
-    padding-top: 2rem;
-    padding-bottom: 2rem;
-}
-
-/* BARRA LATERAL */
-section[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #1f4e78 0%, #2f75b5 100%);
-}
-
-/* TEXTO DE LA BARRA LATERAL */
-section[data-testid="stSidebar"] * {
-    color: white;
-}
-
-/* SELECTBOX DEL MENÚ */
-section[data-testid="stSidebar"] div[data-baseweb="select"] > div {
-    background-color: white;
-    color: #1f2937;
-    border-radius: 10px;
-}
-
-/* TITULOS */
-h1 {
-    color: #1f4e78;
-    font-weight: 800;
-}
-
-h2, h3 {
-    color: #2f75b5;
-}
-
-/* BOTONES */
-.stButton > button {
-    background: linear-gradient(90deg, #2f75b5, #1f4e78);
-    color: white;
-    border: none;
-    border-radius: 10px;
-    padding: 0.6rem 1rem;
-    font-weight: 600;
-    transition: 0.3s;
-}
-
-.stButton > button:hover {
-    transform: scale(1.03);
-    background: linear-gradient(90deg, #1f4e78, #163a5c);
-    color: white;
-}
-
-/* METRICAS */
-div[data-testid="stMetric"] {
-    background-color: white;
-    border: 1px solid #dbeafe;
-    padding: 18px;
-    border-radius: 15px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-}
-
-/* INPUTS */
-div[data-baseweb="input"] > div {
-    border-radius: 10px;
-}
-
-/* SELECTBOX */
-div[data-baseweb="select"] > div {
-    border-radius: 10px;
-}
-
-/* TABS */
-button[data-baseweb="tab"] {
-    font-weight: 700;
-    border-radius: 8px 8px 0 0;
-}
-
-/* TAB ACTIVO */
-button[data-baseweb="tab"][aria-selected="true"] {
-    color: #1f4e78;
-    background-color: #dbeafe;
-}
-
-/* TABLAS */
-div[data-testid="stDataFrame"] {
-    background-color: white;
-    border-radius: 12px;
-    padding: 10px;
-    box-shadow: 0 3px 10px rgba(0,0,0,0.06);
-}
-
-/* MENSAJES */
-div[data-testid="stAlert"] {
-    border-radius: 12px;
-}
-
-/* LINEAS */
-hr {
-    border: none;
-    height: 1px;
-    background-color: #dbeafe;
-}
-
-/* SCROLLBAR */
-::-webkit-scrollbar {
-    width: 8px;
-}
-
-::-webkit-scrollbar-thumb {
-    background: #2f75b5;
-    border-radius: 10px;
-}
-
+.stApp {background:#f5f8fc;color:#182b49;}
+.block-container {padding-top:1.6rem;padding-bottom:3rem;max-width:1400px;}
+section[data-testid="stSidebar"] {background:linear-gradient(165deg,#102a49,#164f78);}
+section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] p {color:#f1f5ff;}
+section[data-testid="stSidebar"] div[data-baseweb="select"] > div {background:white;color:#1b3553;border-radius:11px;}
+h1 {color:#14385f;font-weight:800;} h2,h3 {color:#1b527e;font-weight:700;}
+div[data-testid="stMetric"] {background:white;border:1px solid #dfebf7;padding:20px;border-radius:17px;box-shadow:0 5px 20px rgba(22,58,99,.06);}
+div[data-testid="stMetricValue"] {color:#153f6c;font-weight:800;}
+.stButton > button, .stFormSubmitButton button,div[data-baseweb="input"] > div,div[data-baseweb="select"] > div {border-radius:10px;}
+div[data-testid="stDataFrame"] {background:white;border:1px solid #e3ebf5;border-radius:14px;padding:8px;}
+div[data-testid="stAlert"] {border-radius:12px;}
 </style>
 """, unsafe_allow_html=True)
+
 # ==========================================================
 # CONEXIÓN CON SUPABASE
 # ==========================================================
@@ -227,12 +123,520 @@ def obtener_productos_completos():
     )
     return respuesta.data
 
+# ==========================================================
+# FUNCIÓN IA - ANÁLISIS DE VENTAS
+# ==========================================================
+
+def obtener_resumen_ventas_ia():
+
+    # ------------------------------------------------------
+    # CONSULTAR VENTAS
+    # ------------------------------------------------------
+
+    respuesta_ventas = (
+        supabase
+        .table("ventas")
+        .select("*")
+        .execute()
+    )
+
+    ventas = respuesta_ventas.data or []
+
+    # ------------------------------------------------------
+    # CONSULTAR DETALLES DE VENTAS + PRODUCTOS
+    # ------------------------------------------------------
+
+    respuesta_detalles = (
+        supabase
+        .table("detalle_ventas")
+        .select(
+            "cantidad, subtotal, "
+            "productos(codigo_producto,nombre_producto)"
+        )
+        .execute()
+    )
+
+    detalles = respuesta_detalles.data or []
+
+    # ------------------------------------------------------
+    # SI NO EXISTEN VENTAS
+    # ------------------------------------------------------
+
+    if not ventas:
+
+        return {
+            "cantidad_ventas": 0,
+            "total_vendido": 0,
+            "ticket_promedio": 0,
+            "productos_mas_vendidos": []
+        }
+
+    # ------------------------------------------------------
+    # TOTAL DE VENTAS
+    # ------------------------------------------------------
+
+    df_ventas_ia = pd.DataFrame(ventas)
+
+    if "total_venta" in df_ventas_ia.columns:
+
+        df_ventas_ia["total_venta"] = pd.to_numeric(
+            df_ventas_ia["total_venta"],
+            errors="coerce"
+        ).fillna(0)
+
+        total_vendido = (
+            df_ventas_ia["total_venta"].sum()
+        )
+
+    else:
+
+        total_vendido = 0
+
+    cantidad_ventas = len(df_ventas_ia)
+
+    if cantidad_ventas > 0:
+
+        ticket_promedio = (
+            total_vendido / cantidad_ventas
+        )
+
+    else:
+
+        ticket_promedio = 0
+
+    # ------------------------------------------------------
+    # PRODUCTOS MÁS VENDIDOS
+    # ------------------------------------------------------
+
+    acumulado_productos = {}
+
+    for detalle in detalles:
+
+        producto = detalle.get("productos")
+
+        if not producto:
+            continue
+
+        codigo = producto.get(
+            "codigo_producto",
+            ""
+        )
+
+        nombre = producto.get(
+            "nombre_producto",
+            "Sin nombre"
+        )
+
+        cantidad = detalle.get(
+            "cantidad",
+            0
+        )
+
+        try:
+            cantidad = float(cantidad)
+        except (TypeError, ValueError):
+            cantidad = 0
+
+        clave = (codigo, nombre)
+
+        if clave not in acumulado_productos:
+            acumulado_productos[clave] = 0
+
+        acumulado_productos[clave] += cantidad
+
+    ranking = []
+
+    for (codigo, nombre), cantidad in acumulado_productos.items():
+
+        ranking.append(
+            {
+                "codigo": codigo,
+                "producto": nombre,
+                "unidades_vendidas": cantidad
+            }
+        )
+
+    ranking = sorted(
+        ranking,
+        key=lambda x: x["unidades_vendidas"],
+        reverse=True
+    )
+
+    # Solo enviamos TOP 10 al modelo
+    ranking = ranking[:10]
+
+    # ------------------------------------------------------
+    # DEVOLVER RESUMEN
+    # ------------------------------------------------------
+
+    return {
+        "cantidad_ventas": cantidad_ventas,
+        "total_vendido": round(
+            total_vendido,
+            2
+        ),
+        "ticket_promedio": round(
+            ticket_promedio,
+            2
+        ),
+        "productos_mas_vendidos": ranking
+    }
+
+# ==========================================================
+# FUNCIÓN IA - ANÁLISIS DE COMPRAS
+# ==========================================================
+
+def obtener_resumen_compras_ia():
+    respuesta_compras = (
+        supabase
+        .table("compras")
+        .select("*")
+        .execute()
+    )
+    compras = respuesta_compras.data or []
+
+    respuesta_detalles = (
+        supabase
+        .table("detalle_compras")
+        .select(
+            "cantidad, subtotal, "
+            "productos(codigo_producto,nombre_producto)"
+        )
+        .execute()
+    )
+    detalles = respuesta_detalles.data or []
+
+    if not compras:
+        return {
+            "cantidad_compras": 0,
+            "total_comprado": 0,
+            "compra_promedio": 0,
+            "productos_mas_comprados": []
+        }
+
+    df_compras_ia = pd.DataFrame(compras)
+
+    if "total_compra" in df_compras_ia.columns:
+        df_compras_ia["total_compra"] = pd.to_numeric(
+            df_compras_ia["total_compra"],
+            errors="coerce"
+        ).fillna(0)
+        total_comprado = df_compras_ia["total_compra"].sum()
+    else:
+        total_comprado = 0
+
+    cantidad_compras = len(df_compras_ia)
+    compra_promedio = (
+        total_comprado / cantidad_compras
+        if cantidad_compras > 0
+        else 0
+    )
+
+    acumulado_productos = {}
+
+    for detalle in detalles:
+        producto = detalle.get("productos")
+        if not producto:
+            continue
+
+        codigo = producto.get("codigo_producto", "")
+        nombre = producto.get("nombre_producto", "Sin nombre")
+
+        try:
+            cantidad = float(detalle.get("cantidad", 0))
+        except (TypeError, ValueError):
+            cantidad = 0
+
+        clave = (codigo, nombre)
+        acumulado_productos[clave] = (
+            acumulado_productos.get(clave, 0) + cantidad
+        )
+
+    ranking = [
+        {
+            "codigo": codigo,
+            "producto": nombre,
+            "unidades_compradas": cantidad
+        }
+        for (codigo, nombre), cantidad
+        in acumulado_productos.items()
+    ]
+
+    ranking = sorted(
+        ranking,
+        key=lambda x: x["unidades_compradas"],
+        reverse=True
+    )[:10]
+
+    return {
+        "cantidad_compras": cantidad_compras,
+        "total_comprado": round(total_comprado, 2),
+        "compra_promedio": round(compra_promedio, 2),
+        "productos_mas_comprados": ranking
+    }
+
+
+# ==========================================================
+# FUNCIÓN IA - ANÁLISIS DE KARDEX
+# ==========================================================
+
+def obtener_resumen_kardex_ia():
+    respuesta = (
+        supabase
+        .table("movimientos_inventario")
+        .select(
+            "tipo_movimiento, cantidad, fecha_movimiento, "
+            "stock_anterior, stock_nuevo, "
+            "productos(codigo_producto,nombre_producto)"
+        )
+        .order("fecha_movimiento", desc=True)
+        .execute()
+    )
+
+    movimientos = respuesta.data or []
+
+    if not movimientos:
+        return {
+            "cantidad_movimientos": 0,
+            "total_entradas": 0,
+            "total_salidas": 0,
+            "productos_mas_salida": [],
+            "ultimos_movimientos": []
+        }
+
+    total_entradas = 0
+    total_salidas = 0
+    salidas_por_producto = {}
+
+    for movimiento in movimientos:
+        tipo = movimiento.get("tipo_movimiento", "")
+
+        try:
+            cantidad = float(movimiento.get("cantidad", 0))
+        except (TypeError, ValueError):
+            cantidad = 0
+
+        producto = movimiento.get("productos") or {}
+        codigo = producto.get("codigo_producto", "")
+        nombre = producto.get("nombre_producto", "Sin producto")
+
+        if tipo == "ENTRADA":
+            total_entradas += cantidad
+
+        elif tipo == "SALIDA":
+            total_salidas += cantidad
+            clave = (codigo, nombre)
+            salidas_por_producto[clave] = (
+                salidas_por_producto.get(clave, 0) + cantidad
+            )
+
+    ranking_salidas = [
+        {
+            "codigo": codigo,
+            "producto": nombre,
+            "unidades_salida": cantidad
+        }
+        for (codigo, nombre), cantidad
+        in salidas_por_producto.items()
+    ]
+
+    ranking_salidas = sorted(
+        ranking_salidas,
+        key=lambda x: x["unidades_salida"],
+        reverse=True
+    )[:10]
+
+    ultimos_movimientos = []
+
+    for movimiento in movimientos[:10]:
+        producto = movimiento.get("productos") or {}
+
+        ultimos_movimientos.append(
+            {
+                "fecha": movimiento.get("fecha_movimiento"),
+                "tipo": movimiento.get("tipo_movimiento"),
+                "codigo": producto.get("codigo_producto", ""),
+                "producto": producto.get(
+                    "nombre_producto",
+                    "Sin producto"
+                ),
+                "cantidad": movimiento.get("cantidad"),
+                "stock_anterior": movimiento.get("stock_anterior"),
+                "stock_nuevo": movimiento.get("stock_nuevo")
+            }
+        )
+
+    return {
+        "cantidad_movimientos": len(movimientos),
+        "total_entradas": total_entradas,
+        "total_salidas": total_salidas,
+        "productos_mas_salida": ranking_salidas,
+        "ultimos_movimientos": ultimos_movimientos
+    }
+
+
+# ==========================================================
+# FUNCIÓN IA - CONTEXTO DE STOCK
+# ==========================================================
+
+def obtener_contexto_stock_ia(pregunta=""):
+    productos = obtener_productos()
+    df = pd.DataFrame(productos)
+
+    if df.empty:
+        return "No existen productos registrados actualmente."
+
+    columnas_numericas = [
+        "stock_actual",
+        "stock_minimo",
+        "stock_maximo",
+        "precio_compra",
+        "precio_venta"
+    ]
+
+    for columna in columnas_numericas:
+        if columna in df.columns:
+            df[columna] = pd.to_numeric(
+                df[columna],
+                errors="coerce"
+            ).fillna(0)
+
+    stock_bajo = df[
+        df["stock_actual"] <= df["stock_minimo"]
+    ].copy()
+
+    agotados = df[
+        df["stock_actual"] == 0
+    ].copy()
+
+    valor_inventario = (
+        df["stock_actual"] * df["precio_compra"]
+    ).sum()
+
+    lista_stock_bajo = []
+
+    for _, producto in stock_bajo.head(20).iterrows():
+        lista_stock_bajo.append(
+            {
+                "codigo": producto["codigo_producto"],
+                "producto": producto["nombre_producto"],
+                "stock_actual": producto["stock_actual"],
+                "stock_minimo": producto["stock_minimo"],
+                "stock_maximo": producto["stock_maximo"],
+                "reponer": max(
+                    producto["stock_maximo"]
+                    - producto["stock_actual"],
+                    0
+                )
+            }
+        )
+
+    lista_agotados = [
+        {
+            "codigo": producto["codigo_producto"],
+            "producto": producto["nombre_producto"]
+        }
+        for _, producto in agotados.head(20).iterrows()
+    ]
+
+    # Buscar un producto concreto mencionado por nombre o código.
+    pregunta_lower = pregunta.lower()
+    coincidencias = []
+
+    for _, producto in df.iterrows():
+        codigo = str(producto.get("codigo_producto", ""))
+        nombre = str(producto.get("nombre_producto", ""))
+
+        if (
+            codigo.lower() in pregunta_lower
+            and codigo.strip() != ""
+        ) or (
+            nombre.lower() in pregunta_lower
+            and nombre.strip() != ""
+        ):
+            coincidencias.append(
+                {
+                    "codigo": codigo,
+                    "producto": nombre,
+                    "stock_actual": producto.get("stock_actual", 0),
+                    "stock_minimo": producto.get("stock_minimo", 0),
+                    "stock_maximo": producto.get("stock_maximo", 0),
+                    "precio_compra": producto.get("precio_compra", 0),
+                    "precio_venta": producto.get("precio_venta", 0)
+                }
+            )
+
+    return f"""
+RESUMEN ACTUAL DEL INVENTARIO
+- Productos registrados: {len(df)}
+- Unidades totales en stock: {df["stock_actual"].sum():.0f}
+- Productos con stock bajo: {len(stock_bajo)}
+- Productos agotados: {len(agotados)}
+- Valor del inventario a costo: S/ {valor_inventario:,.2f}
+
+PRODUCTOS CON STOCK BAJO (máximo 20):
+{lista_stock_bajo}
+
+PRODUCTOS AGOTADOS (máximo 20):
+{lista_agotados}
+
+PRODUCTOS MENCIONADOS EN LA PREGUNTA:
+{coincidencias[:10]}
+"""
+
+
+# ==========================================================
+# FUNCIÓN IA - DETECTAR TIPO DE CONSULTA
+# ==========================================================
+
+def detectar_tipo_consulta_ia(pregunta):
+    texto = pregunta.lower()
+
+    palabras_ventas = [
+        "venta", "ventas", "vendido", "vendidos",
+        "vendida", "vendidas", "ticket", "ingreso",
+        "ingresos", "facturación", "facturacion"
+    ]
+
+    palabras_compras = [
+        "compra", "compras", "comprado", "comprados",
+        "comprada", "compradas", "adquisición", "adquisicion"
+    ]
+
+    palabras_kardex = [
+        "kardex", "movimiento", "movimientos",
+        "entrada", "entradas", "salida", "salidas"
+    ]
+
+    palabras_stock = [
+        "stock", "inventario", "reponer", "reposición",
+        "reposicion", "agotado", "agotados", "producto",
+        "productos", "existencia", "existencias"
+    ]
+
+    if any(palabra in texto for palabra in palabras_ventas):
+        return "ventas"
+
+    if any(palabra in texto for palabra in palabras_compras):
+        return "compras"
+
+    if any(palabra in texto for palabra in palabras_kardex):
+        return "kardex"
+
+    if any(palabra in texto for palabra in palabras_stock):
+        return "stock"
+
+    return "general"
+
+
 
 # ==========================================================
 # MENÚ LATERAL
 # ==========================================================
 
-st.sidebar.title("🏪 INVENTARIO")
+st.sidebar.title("📦 INVENTARIO PRO")
+st.sidebar.caption("Gestión inteligente de abarrotes")
+st.sidebar.divider()
 
 opcion = st.sidebar.selectbox(
     "Seleccione una opción",
@@ -245,7 +649,8 @@ opcion = st.sidebar.selectbox(
         "Ventas",
         "Kardex",
         "Stock bajo",
-        "Reportes"
+        "Reportes",
+        "🤖 Asistente IA"
     ]
 )
 
@@ -256,7 +661,7 @@ opcion = st.sidebar.selectbox(
 
 if opcion == "Inicio":
 
-    st.title("🏪 Sistema de Control de Inventario")
+    st.title("📦 Sistema Inteligente de Control de Inventarios")
 
     st.write(
         "Bodega de Abarrotes - Panel principal de control"
@@ -390,6 +795,25 @@ if opcion == "Inicio":
                     f"{total_salidas:,.0f} unidades"
                 )
 
+            st.divider()
+
+            # GRÁFICOS CON DATOS REALES DE SUPABASE
+            st.subheader("📈 Análisis visual del inventario")
+            graf_izq, graf_der = st.columns(2)
+            with graf_izq:
+                st.markdown("**Productos con mayor stock**")
+                graf_stock = df_productos[["nombre_producto", "stock_actual"]].copy()
+                graf_stock["stock_actual"] = pd.to_numeric(graf_stock["stock_actual"], errors="coerce").fillna(0)
+                graf_stock = graf_stock.sort_values("stock_actual", ascending=False).head(10).set_index("nombre_producto")
+                st.bar_chart(graf_stock, horizontal=True)
+            with graf_der:
+                st.markdown("**Entradas y salidas**")
+                graf_mov = pd.DataFrame({"Movimiento": ["Entradas", "Salidas"], "Unidades": [float(total_entradas), float(total_salidas)]}).set_index("Movimiento")
+                st.bar_chart(graf_mov)
+            st.markdown("**Productos con mayor valor en inventario**")
+            graf_valor = df_productos[["nombre_producto", "valor_inventario"]].copy()
+            graf_valor = graf_valor.sort_values("valor_inventario", ascending=False).head(10).set_index("nombre_producto")
+            st.bar_chart(graf_valor, horizontal=True)
             st.divider()
 
             # --------------------------------------------------
@@ -6560,3 +6984,213 @@ elif opcion == "Reportes":
         )
 
         st.code(str(e))
+# ==========================================================
+# ASISTENTE IA
+# ==========================================================
+
+elif opcion == "🤖 Asistente IA":
+
+    st.title("🤖 Asistente IA · Chatbot de Inventarios")
+
+    st.write(
+        "Consulta información real sobre productos, stock, "
+        "ventas, compras y Kardex."
+    )
+
+    st.info("💬 Consulta stock, compras, ventas y Kardex con datos de Supabase.")
+
+    client = Groq(
+        api_key=st.secrets["GROQ_API_KEY"]
+    )
+
+    if "mensajes_ia" not in st.session_state:
+        st.session_state.mensajes_ia = []
+
+    if st.button("🗑️ Limpiar conversación"):
+        st.session_state.mensajes_ia = []
+        st.rerun()
+
+    for mensaje in st.session_state.mensajes_ia:
+        with st.chat_message(mensaje["role"]):
+            st.markdown(mensaje["content"])
+
+    pregunta = st.chat_input(
+        "Pregunta sobre tu inventario..."
+    )
+
+    if pregunta:
+
+        st.session_state.mensajes_ia.append(
+            {
+                "role": "user",
+                "content": pregunta
+            }
+        )
+
+        with st.chat_message("user"):
+            st.markdown(pregunta)
+
+        try:
+            # --------------------------------------------------
+            # DETECTAR QUÉ INFORMACIÓN NECESITA LA PREGUNTA
+            # --------------------------------------------------
+
+            tipo_consulta = detectar_tipo_consulta_ia(
+                pregunta
+            )
+
+            # --------------------------------------------------
+            # CONSULTAR SOLO LOS DATOS NECESARIOS
+            # --------------------------------------------------
+
+            if tipo_consulta == "ventas":
+
+                datos = obtener_resumen_ventas_ia()
+
+                contexto = f"""
+DATOS REALES DE VENTAS:
+- Cantidad de ventas: {datos["cantidad_ventas"]}
+- Total vendido: S/ {datos["total_vendido"]:,.2f}
+- Ticket promedio: S/ {datos["ticket_promedio"]:,.2f}
+- Top 10 productos más vendidos:
+{datos["productos_mas_vendidos"]}
+"""
+
+            elif tipo_consulta == "compras":
+
+                datos = obtener_resumen_compras_ia()
+
+                contexto = f"""
+DATOS REALES DE COMPRAS:
+- Cantidad de compras: {datos["cantidad_compras"]}
+- Total comprado: S/ {datos["total_comprado"]:,.2f}
+- Compra promedio: S/ {datos["compra_promedio"]:,.2f}
+- Top 10 productos más comprados:
+{datos["productos_mas_comprados"]}
+"""
+
+            elif tipo_consulta == "kardex":
+
+                datos = obtener_resumen_kardex_ia()
+
+                contexto = f"""
+DATOS REALES DEL KARDEX:
+- Cantidad de movimientos: {datos["cantidad_movimientos"]}
+- Unidades de entrada: {datos["total_entradas"]}
+- Unidades de salida: {datos["total_salidas"]}
+- Top 10 productos con más salidas:
+{datos["productos_mas_salida"]}
+- Últimos 10 movimientos:
+{datos["ultimos_movimientos"]}
+"""
+
+            elif tipo_consulta == "stock":
+
+                contexto = obtener_contexto_stock_ia(
+                    pregunta
+                )
+
+            else:
+                # Consulta general: enviamos solo indicadores
+                # resumidos, nunca las tablas completas.
+                contexto_stock = obtener_contexto_stock_ia(
+                    pregunta
+                )
+
+                ventas = obtener_resumen_ventas_ia()
+                compras = obtener_resumen_compras_ia()
+                kardex = obtener_resumen_kardex_ia()
+
+                contexto = f"""
+RESUMEN GENERAL DEL SISTEMA:
+
+{contexto_stock}
+
+VENTAS:
+- Cantidad: {ventas["cantidad_ventas"]}
+- Total: S/ {ventas["total_vendido"]:,.2f}
+- Ticket promedio: S/ {ventas["ticket_promedio"]:,.2f}
+
+COMPRAS:
+- Cantidad: {compras["cantidad_compras"]}
+- Total: S/ {compras["total_comprado"]:,.2f}
+- Compra promedio: S/ {compras["compra_promedio"]:,.2f}
+
+KARDEX:
+- Movimientos: {kardex["cantidad_movimientos"]}
+- Entradas: {kardex["total_entradas"]}
+- Salidas: {kardex["total_salidas"]}
+"""
+
+            # --------------------------------------------------
+            # INSTRUCCIONES DEL MODELO
+            # --------------------------------------------------
+
+            mensaje_sistema = f"""
+Eres un asistente de inteligencia artificial para un
+sistema de control de inventario de una bodega de abarrotes.
+
+TIPO DE CONSULTA DETECTADA:
+{tipo_consulta}
+
+INFORMACIÓN REAL OBTENIDA DE SUPABASE:
+{contexto}
+
+REGLAS:
+- Responde siempre en español.
+- Sé claro, breve y fácil de entender.
+- No inventes productos, cantidades, precios ni resultados.
+- Usa los datos proporcionados cuando la pregunta sea
+  sobre el sistema.
+- Si faltan datos para responder, indícalo claramente.
+- No afirmes que consultaste información que no aparece
+  en el contexto.
+- Cuando muestres rankings, ordénalos de mayor a menor.
+- Cuando corresponda, usa soles (S/) para importes.
+"""
+
+            # Solo conservamos los últimos mensajes para evitar
+            # exceder el límite de tokens.
+            historial_reciente = (
+                st.session_state.mensajes_ia[-6:]
+            )
+
+            mensajes_modelo = [
+                {
+                    "role": "system",
+                    "content": mensaje_sistema
+                }
+            ]
+
+            mensajes_modelo.extend(
+                historial_reciente
+            )
+
+            respuesta = client.chat.completions.create(
+                model="openai/gpt-oss-20b",
+                messages=mensajes_modelo
+            )
+
+            texto_respuesta = (
+                respuesta.choices[0].message.content
+            )
+
+            st.session_state.mensajes_ia.append(
+                {
+                    "role": "assistant",
+                    "content": texto_respuesta
+                }
+            )
+
+            with st.chat_message("assistant"):
+                st.markdown(texto_respuesta)
+
+        except Exception as e:
+
+            st.error(
+                "❌ Ocurrió un error al consultar "
+                "el asistente de inventario."
+            )
+
+            st.code(str(e))
+
